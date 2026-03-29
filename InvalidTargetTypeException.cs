@@ -43,19 +43,21 @@ public sealed class InvalidTargetTypeException : Exception
 			Throw(paramName);
 		}
 
-		if (targetType != typeof(INotifyPropertyChanged) && targetType != typeof(INotifyPropertyChanging))
-		{
-			var propertyMemberNames = targetType
-				.GetProperties(BindingFlags.Public | BindingFlags.Instance)
-				.SelectMany(p => new[] { p.GetMethod, p.SetMethod }.Where(m => m is not null).Select(m => m!.Name))
-				.ToHashSet();
-			var members = targetType.GetMembers(BindingFlags.Public | BindingFlags.Instance);
-			bool allMembersAreProperties = members.All(member => member.MemberType == MemberTypes.Property || propertyMemberNames.Contains(member.Name));
+		var eventMemberNames = targetType
+			.GetEvents(BindingFlags.Public | BindingFlags.Instance)
+			.SelectMany(p => new[] { p.AddMethod, p.RemoveMethod }.Where(m => m is not null).Select(m => m!.Name));
+		var propertyMemberNames = targetType
+			.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+			.SelectMany(p => new[] { p.GetMethod, p.SetMethod }.Where(m => m is not null).Select(m => m!.Name));
+		var memberNames = propertyMemberNames
+			.Concat(eventMemberNames)
+			.ToHashSet();
+		var members = targetType.GetMembers(BindingFlags.Public | BindingFlags.Instance);
+		bool allMembersAreEventsOrProperties = members.All(member => member.MemberType == MemberTypes.Property || member.MemberType == MemberTypes.Event || memberNames.Contains(member.Name));
 
-			if (!allMembersAreProperties)
-			{
-				Throw(paramName);
-			}
+		if (!allMembersAreEventsOrProperties)
+		{
+			Throw(paramName);
 		}
 	}
 

@@ -36,11 +36,11 @@ public static class ViewModelProxyFactory
 	private static readonly ProxyGenerator _proxyGenerator = new();
 	private static readonly EventuallyCorrectCache<Type, object> _interceptorTemplateCache = new(CreateInterceptorTemplate, TypeComparer.Instance);
 
-	public static TViewModel CreateProxy<TViewModel>(IViewModelProxy<TViewModel> viewModel)
+	public static TViewModel CreateProxy<TViewModel>(IViewModelProxy<TViewModel> viewModelProxy)
 		where TViewModel : class
 	{
 		var interceptorTemplate = (_interceptorTemplateCache.GetValue(typeof(TViewModel)) as InterceptorTemplate<TViewModel>) ?? throw new NotImplementedException();
-		var interceptorWrapper = new InterceptorWrapper<TViewModel>(viewModel, interceptorTemplate);
+		var interceptorWrapper = new InterceptorWrapper<TViewModel>(viewModelProxy, interceptorTemplate);
 		return _proxyGenerator.CreateInterfaceProxyWithoutTarget<TViewModel>(interceptorWrapper);
 	}
 
@@ -50,89 +50,84 @@ public static class ViewModelProxyFactory
 	}
 
 	#region InterceptorWrapper
-	private sealed class InterceptorWrapper<T>(IViewModelProxy<T> data, InterceptorTemplate<T> interceptorTemplate) : IInterceptor where T : class
+	private sealed class InterceptorWrapper<TViewModel>(IViewModelProxy<TViewModel> viewModelProxy, InterceptorTemplate<TViewModel> interceptorTemplate) : IInterceptor where TViewModel : class
 	{
-		private readonly IViewModelProxy<T> _data = data ?? throw new ArgumentNullException(nameof(data));
-		private readonly InterceptorTemplate<T> _interceptorTemplate = interceptorTemplate ?? throw new ArgumentNullException(nameof(interceptorTemplate));
-		public void Intercept(IInvocation invocation) => _interceptorTemplate.Intercept(invocation, _data);
+		private readonly IViewModelProxy<TViewModel> _viewModelProxy = viewModelProxy ?? throw new ArgumentNullException(nameof(viewModelProxy));
+		private readonly InterceptorTemplate<TViewModel> _interceptorTemplate = interceptorTemplate ?? throw new ArgumentNullException(nameof(interceptorTemplate));
+		public void Intercept(IInvocation invocation) => _interceptorTemplate.Intercept(invocation, _viewModelProxy);
 	}
 	#endregion InterceptorWrapper
 
 	#region InterceptorTemplate
-	private sealed class InterceptorTemplate<T> where T : class
+	private sealed class InterceptorTemplate<TViewModel> where TViewModel : class
 	{
 		private record struct InvocationIdentity(string MethodName, string DeclaringTypeFullName);
-		private readonly Dictionary<string, Action<IViewModelProxy<T>, IInvocation>> _invocationCallbackCache = [];
+		private readonly Dictionary<string, Action<IViewModelProxy<TViewModel>, IInvocation>> _invocationCallbackCache = [];
 
 		public InterceptorTemplate()
 		{
-			var targetTypes = GetValidTargetTypes(typeof(T)).ToList();
-			var notifyPropertyChanged = targetTypes.Remove(typeof(INotifyPropertyChanged))
-				? typeof(INotifyPropertyChanged).GetEvent("PropertyChanged")
-				: null;
-			var notifyPropertyChanging = targetTypes.Remove(typeof(INotifyPropertyChanging))
-				? typeof(INotifyPropertyChanging).GetEvent("PropertyChanging")
-				: null;
+			var viewModelTypes = GetValidTargetTypes(typeof(TViewModel)).ToList();
+			var eventInfos = viewModelTypes
+				.SelectMany(t => t.GetEvents(BindingFlags.Public | BindingFlags.Instance))
+				.Where(e => e.EventHandlerType is not null)
+				.ToArray();
 
-			if (notifyPropertyChanged is not null)
+			foreach (var eventInfo in eventInfos)
 			{
-				var adder = notifyPropertyChanged.GetAddMethod() ?? throw new NotImplementedException();
-				_invocationCallbackCache[adder.Name] = (data, inv) =>
+				var adder = eventInfo.GetAddMethod() ?? throw new NotImplementedException();
+				_invocationCallbackCache[adder.Name] = (viewModelProxy, inv) =>
 				{
-					if (inv.Arguments[0] is PropertyChangedEventHandler handler
-						&& data is INotifyPropertyChanged viewModel)
+					var declaringType = inv.Method.DeclaringType
+						?? throw new NotImplementedException();
+
+					var viewModelProxyType = viewModelProxy.GetType();
+					if (GetAllInterfaces(viewModelProxyType).All(i => i != declaringType))
 					{
-						viewModel.PropertyChanged += handler!;
+						throw MissingEventInterfaceException.WhenAttaching(declaringType, viewModelProxyType, eventInfo);
 					}
+
+					if (inv.Arguments[0] is not Delegate eventHandler)
+					{
+						throw new NotImplementedException();
+					}
+
+					eventInfo.AddEventHandler(viewModelProxy, eventHandler);
 				};
 
-				var remover = notifyPropertyChanged.GetRemoveMethod() ?? throw new NotImplementedException();
-				_invocationCallbackCache[remover.Name] = (data, inv) =>
+				var remover = eventInfo.GetRemoveMethod() ?? throw new NotImplementedException();
+				_invocationCallbackCache[remover.Name] = (viewModelProxy, inv) =>
 				{
-					if (inv.Arguments[0] is PropertyChangedEventHandler handler
-						&& data is INotifyPropertyChanged viewModel)
+					var declaringType = inv.Method.DeclaringType
+						?? throw new NotImplementedException();
+
+					var viewModelProxyType = viewModelProxy.GetType();
+					if (GetAllInterfaces(viewModelProxyType).All(i => i != declaringType))
 					{
-						viewModel.PropertyChanged -= handler;
+						throw MissingEventInterfaceException.WhenDetaching(declaringType, viewModelProxyType, eventInfo);
 					}
+
+					if (inv.Arguments[0] is not Delegate eventHandler)
+					{
+						throw new NotImplementedException();
+					}
+
+					eventInfo.RemoveEventHandler(viewModelProxy, eventHandler);
 				};
 			}
 
-			if (notifyPropertyChanging is not null)
+			var propertyInfos = viewModelTypes.SelectMany(t => t.GetProperties(BindingFlags.Public | BindingFlags.Instance));
+			foreach (var propertyInfo in propertyInfos)
 			{
-				var adder = notifyPropertyChanging.GetAddMethod() ?? throw new NotImplementedException();
-				_invocationCallbackCache[adder.Name] = (data, inv) =>
-				{
-					if (inv.Arguments[0] is PropertyChangingEventHandler handler
-						&& data is INotifyPropertyChanging viewModel)
-					{
-						viewModel.PropertyChanging += handler;
-					}
-				};
-
-				var remover = notifyPropertyChanging.GetRemoveMethod() ?? throw new NotImplementedException();
-				_invocationCallbackCache[remover.Name] = (data, inv) =>
-				{
-					if (inv.Arguments[0] is PropertyChangingEventHandler handler
-						&& data is INotifyPropertyChanging viewModel)
-					{
-						viewModel.PropertyChanging -= handler;
-					}
-				};
-			}
-
-			var properties = targetTypes.SelectMany(t => t.GetProperties(BindingFlags.Public | BindingFlags.Instance));
-			foreach (var property in properties)
-			{
-				var getter = property.GetGetMethod();
+				var getter = propertyInfo.GetGetMethod();
 				if (getter is not null)
 				{
-					_invocationCallbackCache[getter.Name] = CreateGetterInvocationCallback(property);
+					_invocationCallbackCache[getter.Name] = CreateGetterInvocationCallback(propertyInfo);
 				}
 
-				var setter = property.GetSetMethod();
+				var setter = propertyInfo.GetSetMethod();
 				if (setter is not null)
 				{
-					_invocationCallbackCache[setter.Name] = CreateSetterInvocationCallback(property);
+					_invocationCallbackCache[setter.Name] = CreateSetterInvocationCallback(propertyInfo);
 				}
 			}
 		}
@@ -153,7 +148,7 @@ public static class ViewModelProxyFactory
 				.Select(g => EnsureValidTargetType(g.First()));
 		}
 
-		private static Action<IViewModelProxy<T>, IInvocation> CreateGetterInvocationCallback(PropertyInfo propertyInfo)
+		private static Action<IViewModelProxy<TViewModel>, IInvocation> CreateGetterInvocationCallback(PropertyInfo propertyInfo)
 		{
 			var propertyName = propertyInfo.Name;
 			if (!propertyInfo.CanRead)
@@ -161,9 +156,9 @@ public static class ViewModelProxyFactory
 				throw new ReadOnlyPropertyException(propertyName);
 			}
 
-			return (data, inv) =>
+			return (viewModelProxy, inv) =>
 			{
-				inv.ReturnValue = data.GetValue(
+				inv.ReturnValue = viewModelProxy.GetValue(
 					propertyName,
 					() =>
 					{
@@ -176,7 +171,7 @@ public static class ViewModelProxyFactory
 			};
 		}
 
-		private static Action<IViewModelProxy<T>, IInvocation> CreateSetterInvocationCallback(PropertyInfo propertyInfo)
+		private static Action<IViewModelProxy<TViewModel>, IInvocation> CreateSetterInvocationCallback(PropertyInfo propertyInfo)
 		{
 			var propertyName = propertyInfo.Name;
 
@@ -186,7 +181,7 @@ public static class ViewModelProxyFactory
 			}
 
 			var propertyType = propertyInfo.PropertyType;
-			return (data, inv) =>
+			return (viewModelProxy, inv) =>
 			{
 				var val = inv.Arguments[0];
 				if (val is not null && !propertyType.IsAssignableFrom(val.GetType()))
@@ -194,10 +189,40 @@ public static class ViewModelProxyFactory
 					throw new InvalidCastException($"Cannot assign value of type '{val.GetType().FullName ?? "null"}' to property '{propertyName}' of type '{propertyType}'.");
 				}
 
-				data.SetValue(propertyName, val);
+				viewModelProxy.SetValue(propertyName, val);
 			};
 		}
 
+		private static HashSet<Type> GetAllInterfaces(Type? type)
+		{
+			if (type == null) throw new ArgumentNullException(nameof(type));
+
+			var interfaces = new HashSet<Type>();
+
+			while (type != null)
+			{
+				foreach (var iface in type.GetInterfaces())
+				{
+					if (!interfaces.Contains(iface))
+					{
+						interfaces.Add(iface);
+
+						// Recursively get all nested interfaces
+						foreach (var nestedIface in GetAllInterfaces(iface))
+						{
+							if (!interfaces.Contains(nestedIface))
+							{
+								interfaces.Add(nestedIface);
+							}
+						}
+					}
+				}
+
+				type = type.BaseType;
+			}
+
+			return interfaces;
+		}
 		private sealed class InvocationComparer : IEqualityComparer<IInvocation>
 		{
 			public static readonly InvocationComparer Instance = new();
@@ -218,11 +243,11 @@ public static class ViewModelProxyFactory
 			public static string CreateIdentity(IInvocation invocation) => invocation.Method.ToString() ?? throw new NotImplementedException();
 		}
 
-		public void Intercept(IInvocation invocation, IViewModelProxy<T> data)
+		public void Intercept(IInvocation invocation, IViewModelProxy<TViewModel> viewModelProxy)
 		{
 			if (_invocationCallbackCache.TryGetValue(invocation.Method.Name, out var invocationCallback))
 			{
-				invocationCallback?.Invoke(data, invocation);
+				invocationCallback?.Invoke(viewModelProxy, invocation);
 			}
 		}
 	}
