@@ -29,7 +29,7 @@ using System.Threading;
 
 namespace BruceMellows.MVVM.ViewModel.Proxy;
 
-public abstract class ViewModelProxy<TViewModel> : PropertyAndEventProxy<TViewModel>
+public abstract class ViewModelProxy<TViewModel> : PropertyAndEventProxy<TViewModel>, IViewModelProxy<TViewModel>
 	where TViewModel : class
 {
 	public ViewModelProxy()
