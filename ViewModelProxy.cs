@@ -30,12 +30,9 @@ using System.Threading;
 
 namespace BruceMellows.MVVM.ViewModel.Proxy;
 
-public abstract class ViewModelProxy<TViewModel> : IViewModelProxy<TViewModel>, INotifyPropertyChanging, INotifyPropertyChanged
+public abstract class ViewModelProxy<TViewModel> : IViewModelProxy<TViewModel>
 	where TViewModel : class
 {
-	public event PropertyChangingEventHandler? PropertyChanging;
-	public event PropertyChangedEventHandler? PropertyChanged;
-
 	#region fields
 	private readonly TViewModel? _viewModelProxy;
 	private readonly Dictionary<string, object?> _properties = [];
@@ -70,36 +67,53 @@ public abstract class ViewModelProxy<TViewModel> : IViewModelProxy<TViewModel>, 
 
 	public bool SetValue(string key, object? value)
 	{
-		if (!_currentBindings.Value!.Add(key))
+
+		using var bindingRecursionDetection = DoDoneAction.Create(
+			() =>
+			{
+				if (!_currentBindings.Value!.Add(key))
+				{
+					throw new InvalidOperationException($"Circular binding detected for properties: {string.Join(", ", _currentBindings.Value)}");
+				}
+			},
+			() =>
+			{
+				if (!_currentBindings.Value!.Remove(key))
+				{
+					throw new InvalidOperationException($"Property not found: {key}");
+				}
+			});
+
+		using var propChanging = DoDoneAction.Create(
+			() => PropertyChangeBegin(key, ViewModel),
+			() => PropertyChangeEnd(key, ViewModel));
+
+		if (_properties.TryGetValue(key, out var oldValue) && Equals(oldValue, value))
 		{
-			throw new InvalidOperationException($"Circular binding detected for properties: {string.Join(", ", _currentBindings.Value)}");
+			return false;
 		}
 
-		try
+		_properties[key] = value;
+		PropertyChanged(key, ViewModel);
+
+		if (bindings.TryGetValue(key, out var binding))
 		{
-
-			PropertyChanging?.Invoke(ViewModel, new PropertyChangingEventArgs(key));
-			if (_properties.TryGetValue(key, out var oldValue) && Equals(oldValue, value))
-			{
-				return false;
-			}
-
-			_properties[key] = value;
-			PropertyChanged?.Invoke(ViewModel, new PropertyChangedEventArgs(key));
-			if (bindings.TryGetValue(key, out var binding))
-			{
-				binding.Invoke(ViewModel, value!);
-			}
-
-			return true;
+			binding.Invoke(ViewModel, value!);
 		}
-		finally
-		{
-			if (!_currentBindings.Value!.Remove(key))
-			{
-				throw new InvalidOperationException($"Property not found: {key}");
-			}
-		}
+
+		return true;
+	}
+
+	public void PropertyChangeBegin(string key, TViewModel viewModel)
+	{
+	}
+
+	public void PropertyChanged(string key, TViewModel viewModel)
+	{
+	}
+
+	public void PropertyChangeEnd(string key, TViewModel viewModel)
+	{
 	}
 	#endregion IViewModelProxy<TViewModel>
 
