@@ -21,6 +21,7 @@
 // SOFTWARE.
 
 using System;
+using System.ComponentModel;
 
 namespace BruceMellows.MVVM.ViewModel.Proxy;
 
@@ -32,14 +33,14 @@ public interface IViewModelProxy<TViewModel> where TViewModel : class
 	/// </summary>
 	/// <param name="key"></param>
 	/// <param name="viewModel"></param>
-	void PropertyChangeBegin(string key, TViewModel viewModel);
+	void OnPropertyChangeBegin(string key, TViewModel viewModel);
 
 	/// <summary>
 	/// This is called if a property change is actually made, immediately after the change has been made.
 	/// </summary>
 	/// <param name="key"></param>
 	/// <param name="viewModel"></param>
-	void PropertyChanged(string key, TViewModel viewModel);
+	void OnPropertyChanged(string key, TViewModel viewModel);
 
 	/// <summary>
 	/// This is called when a property change has ended, irrespective of whether the property value is actually changed or not.<br/>
@@ -47,7 +48,7 @@ public interface IViewModelProxy<TViewModel> where TViewModel : class
 	/// </summary>
 	/// <param name="key"></param>
 	/// <param name="viewModel"></param>
-	void PropertyChangeEnd(string key, TViewModel viewModel);
+	void OnPropertyChangeEnd(string key, TViewModel viewModel);
 
 	/// <summary>
 	/// Return the (nullable) value for the supplied key.<br/>

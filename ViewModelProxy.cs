@@ -26,6 +26,7 @@ using System.Collections.Generic;
 using System.ComponentModel;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
+using System.Reflection;
 using System.Threading;
 
 namespace BruceMellows.MVVM.ViewModel.Proxy;
@@ -85,8 +86,12 @@ public abstract class ViewModelProxy<TViewModel> : IViewModelProxy<TViewModel>
 			});
 
 		using var propChanging = DoDoneAction.Create(
-			() => PropertyChangeBegin(key, ViewModel),
-			() => PropertyChangeEnd(key, ViewModel));
+			() =>
+			{
+				OnPropertyChangeBegin(key, ViewModel);
+				RaiseEvent<INotifyPropertyChanging>(nameof(INotifyPropertyChanging.PropertyChanging), ViewModel, new PropertyChangingEventArgs(key));
+			},
+			() => OnPropertyChangeEnd(key, ViewModel));
 
 		if (_properties.TryGetValue(key, out var oldValue) && Equals(oldValue, value))
 		{
@@ -94,7 +99,8 @@ public abstract class ViewModelProxy<TViewModel> : IViewModelProxy<TViewModel>
 		}
 
 		_properties[key] = value;
-		PropertyChanged(key, ViewModel);
+		OnPropertyChanged(key, ViewModel);
+		RaiseEvent<INotifyPropertyChanged>(nameof(INotifyPropertyChanged.PropertyChanged), ViewModel, new PropertyChangedEventArgs(key));
 
 		if (bindings.TryGetValue(key, out var binding))
 		{
@@ -104,15 +110,15 @@ public abstract class ViewModelProxy<TViewModel> : IViewModelProxy<TViewModel>
 		return true;
 	}
 
-	public void PropertyChangeBegin(string key, TViewModel viewModel)
+	public void OnPropertyChangeBegin(string key, TViewModel viewModel)
 	{
 	}
 
-	public void PropertyChanged(string key, TViewModel viewModel)
+	public void OnPropertyChanged(string key, TViewModel viewModel)
 	{
 	}
 
-	public void PropertyChangeEnd(string key, TViewModel viewModel)
+	public void OnPropertyChangeEnd(string key, TViewModel viewModel)
 	{
 	}
 	#endregion IViewModelProxy<TViewModel>
@@ -130,5 +136,20 @@ public abstract class ViewModelProxy<TViewModel> : IViewModelProxy<TViewModel>
 	}
 	#endregion Binding implementation
 
+	private void RaiseEvent<T>(string eventName, object sender, object eventArgs)
+	{
+		if (this is T)
+		{
+			var eventField = GetType()
+				.GetField(eventName, BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+			var eventHandler = eventField
+				?.GetValue(this);
+			var invokeMethod = eventHandler
+				?.GetType()?.GetMethod("Invoke");
+			// FIXME - cache the invoke method
+			invokeMethod
+				?.Invoke(eventHandler, [sender, eventArgs]);
+		}
+	}
 	#endregion Internals
 }
