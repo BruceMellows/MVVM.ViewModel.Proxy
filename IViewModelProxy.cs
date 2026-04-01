@@ -20,12 +20,9 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-using System;
-using System.ComponentModel;
-
 namespace BruceMellows.MVVM.ViewModel.Proxy;
 
-public interface IViewModelProxy<TViewModel> where TViewModel : class
+public interface IViewModelProxy<TViewModel> : IPropertyAndEventProxy<TViewModel> where TViewModel : class
 {
 	/// <summary>
 	/// This is called when a property change is begun, irrespective of whether the property value is actually changed or not.<br/>
@@ -49,26 +46,4 @@ public interface IViewModelProxy<TViewModel> where TViewModel : class
 	/// <param name="key"></param>
 	/// <param name="viewModel"></param>
 	void OnPropertyChangeEnd(string key, TViewModel viewModel);
-
-	/// <summary>
-	/// Return the (nullable) value for the supplied key.<br/>
-	/// If the key is not found, the getDefaultValue function is called to get a default value, which is then stored and returned.<br/>
-	/// This allows for lazy initialization of properties.
-	/// </summary>
-	/// <param name="key"></param>
-	/// <param name="getDefaultValue"></param>
-	/// <returns></returns>
-	object? GetValue(string key, Func<object> getDefaultValue);
-
-	/// <summary>
-	/// Set the value for the supplied key.<br/>
-	/// If the supplied value is not the same as the existing value, the PropertyChanged method is called.<br/>
-	/// The PropertyChangeBegin and PropertyChangeEnd methods are called regardless of whether the value is actually changed or not, allowing for actions to be performed before and after the change.<br/>
-	/// </summary>
-	bool SetValue(string key, object? value);
-
-	/// <summary>
-	/// Get the view model instance that this proxy represents. The view model is created by the proxy and implements the interface TViewModel.
-	/// </summary>
-	TViewModel ViewModel { get; }
 }

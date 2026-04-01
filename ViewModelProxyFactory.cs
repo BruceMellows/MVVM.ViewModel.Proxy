@@ -31,17 +31,17 @@ using System.Runtime.CompilerServices;
 
 namespace BruceMellows.MVVM.ViewModel.Proxy;
 
-public static class ViewModelProxyFactory
+public static class PropertyAndEventProxyFactory
 {
 	private static readonly ProxyGenerator _proxyGenerator = new();
 	private static readonly EventuallyCorrectCache<Type, object> _interceptorTemplateCache = new(CreateInterceptorTemplate, TypeComparer.Instance);
 
-	public static TViewModel CreateProxy<TViewModel>(IViewModelProxy<TViewModel> viewModelProxy)
-		where TViewModel : class
+	public static TPropertyAndEventInterface CreateProxy<TPropertyAndEventInterface>(IPropertyAndEventProxy<TPropertyAndEventInterface> proxied)
+		where TPropertyAndEventInterface : class
 	{
-		var interceptorTemplate = (_interceptorTemplateCache.GetValue(typeof(TViewModel)) as InterceptorTemplate<TViewModel>) ?? throw new NotImplementedException();
-		var interceptorWrapper = new InterceptorWrapper<TViewModel>(viewModelProxy, interceptorTemplate);
-		return _proxyGenerator.CreateInterfaceProxyWithoutTarget<TViewModel>(interceptorWrapper);
+		var interceptorTemplate = (_interceptorTemplateCache.GetValue(typeof(TPropertyAndEventInterface)) as InterceptorTemplate<TPropertyAndEventInterface>) ?? throw new NotImplementedException();
+		var interceptorWrapper = new InterceptorWrapper<TPropertyAndEventInterface>(proxied, interceptorTemplate);
+		return _proxyGenerator.CreateInterfaceProxyWithoutTarget<TPropertyAndEventInterface>(interceptorWrapper);
 	}
 
 	private static object CreateInterceptorTemplate(Type t)
@@ -50,11 +50,11 @@ public static class ViewModelProxyFactory
 	}
 
 	#region InterceptorWrapper
-	private sealed class InterceptorWrapper<TViewModel>(IViewModelProxy<TViewModel> viewModelProxy, InterceptorTemplate<TViewModel> interceptorTemplate) : IInterceptor where TViewModel : class
+	private sealed class InterceptorWrapper<TPropertyAndEventInterface>(IPropertyAndEventProxy<TPropertyAndEventInterface> proxied, InterceptorTemplate<TPropertyAndEventInterface> interceptorTemplate) : IInterceptor where TPropertyAndEventInterface : class
 	{
-		private readonly IViewModelProxy<TViewModel> _viewModelProxy = viewModelProxy ?? throw new ArgumentNullException(nameof(viewModelProxy));
-		private readonly InterceptorTemplate<TViewModel> _interceptorTemplate = interceptorTemplate ?? throw new ArgumentNullException(nameof(interceptorTemplate));
-		public void Intercept(IInvocation invocation) => _interceptorTemplate.Intercept(invocation, _viewModelProxy);
+		private readonly IPropertyAndEventProxy<TPropertyAndEventInterface> _proxied = proxied ?? throw new ArgumentNullException(nameof(proxied));
+		private readonly InterceptorTemplate<TPropertyAndEventInterface> _interceptorTemplate = interceptorTemplate ?? throw new ArgumentNullException(nameof(interceptorTemplate));
+		public void Intercept(IInvocation invocation) => _interceptorTemplate.Intercept(invocation, _proxied);
 	}
 	#endregion InterceptorWrapper
 
@@ -62,7 +62,7 @@ public static class ViewModelProxyFactory
 	private sealed class InterceptorTemplate<TViewModel> where TViewModel : class
 	{
 		private record struct InvocationIdentity(string MethodName, string DeclaringTypeFullName);
-		private readonly Dictionary<string, Action<IViewModelProxy<TViewModel>, IInvocation>> _invocationCallbackCache = [];
+		private readonly Dictionary<string, Action<IPropertyAndEventProxy<TViewModel>, IInvocation>> _invocationCallbackCache = [];
 
 		public InterceptorTemplate()
 		{
@@ -148,7 +148,7 @@ public static class ViewModelProxyFactory
 				.Select(g => EnsureValidTargetType(g.First()));
 		}
 
-		private static Action<IViewModelProxy<TViewModel>, IInvocation> CreateGetterInvocationCallback(PropertyInfo propertyInfo)
+		private static Action<IPropertyAndEventProxy<TViewModel>, IInvocation> CreateGetterInvocationCallback(PropertyInfo propertyInfo)
 		{
 			var propertyName = propertyInfo.Name;
 			if (!propertyInfo.CanRead)
@@ -171,7 +171,7 @@ public static class ViewModelProxyFactory
 			};
 		}
 
-		private static Action<IViewModelProxy<TViewModel>, IInvocation> CreateSetterInvocationCallback(PropertyInfo propertyInfo)
+		private static Action<IPropertyAndEventProxy<TViewModel>, IInvocation> CreateSetterInvocationCallback(PropertyInfo propertyInfo)
 		{
 			var propertyName = propertyInfo.Name;
 
@@ -243,7 +243,7 @@ public static class ViewModelProxyFactory
 			public static string CreateIdentity(IInvocation invocation) => invocation.Method.ToString() ?? throw new NotImplementedException();
 		}
 
-		public void Intercept(IInvocation invocation, IViewModelProxy<TViewModel> viewModelProxy)
+		public void Intercept(IInvocation invocation, IPropertyAndEventProxy<TViewModel> viewModelProxy)
 		{
 			if (_invocationCallbackCache.TryGetValue(invocation.Method.Name, out var invocationCallback))
 			{
